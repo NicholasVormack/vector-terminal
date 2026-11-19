@@ -3,6 +3,11 @@ name: Deploy to GitHub Pages
 # Both common default-branch names are wired into the trigger, so a push to
 # either one deploys. There is deliberately no job-level `if`: every run that
 # starts here publishes, so a push can never be silently skipped.
+#
+# Pages serves one site per repository, so both apps ship in a single artifact:
+# VECTOR at the site root, GE TERMINAL under /rs-terminal/. Both builds use
+# `base: './'`, which is what lets the second app work at a subpath without
+# hardcoding the repository name.
 on:
   push:
     branches: [main, master]
@@ -22,15 +27,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
-      - run: npm run build
-      # Vite emits assets/ at the root; .nojekyll stops Jekyll from touching them
-      - run: touch dist/.nojekyll
+          cache-dependency-path: |
+            package-lock.json
+            rs-terminal/package-lock.json
+
+      - name: Build VECTOR
+        run: npm ci && npm run build
+
+      - name: Build GE TERMINAL
+        working-directory: rs-terminal
+        run: npm ci && npm run build
+
+      # VECTOR owns the artifact root; the dashboard is nested under it. The
+      # copy happens after the root build because that build empties dist/.
+      - name: Assemble the site
+        run: |
+          mkdir -p dist/rs-terminal
+          cp -R rs-terminal/dist/. dist/rs-terminal/
+          # Vite emits assets/ directories; .nojekyll stops Jekyll from
+          # touching them anywhere in the tree.
+          touch dist/.nojekyll
+
       - uses: actions/configure-pages@v5
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
