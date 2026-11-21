@@ -44,6 +44,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('perf');
   const [logScale, setLogScale] = useState(false);
   const [toggles, setToggles] = useState({ sma20: true, sma50: true, sma200: false, bb: false });
+  const [tick, setTick] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -99,6 +100,21 @@ export default function App() {
     [],
   );
 
+  const needle = tick.trim().toLowerCase();
+  const universe = needle
+    ? marks.filter(
+        (mk) =>
+          mk.inst.symbol.toLowerCase().includes(needle) ||
+          mk.inst.name.toLowerCase().includes(needle) ||
+          mk.inst.sector.toLowerCase().includes(needle) ||
+          mk.inst.industry.toLowerCase().includes(needle),
+      )
+    : marks;
+
+  const jumpToFirst = () => {
+    if (universe.length) setSymbol(universe[0].inst.symbol);
+  };
+
   const lastBar = bars[bars.length - 1];
   const prevBar = bars[bars.length - 2] ?? lastBar;
   const dayChg = lastBar && prevBar ? lastBar.c / prevBar.c - 1 : 0;
@@ -119,10 +135,30 @@ export default function App() {
         <div className="side-section">
           <div className="side-head">
             <h5>Universe</h5>
-            <span className="dim">{INSTRUMENTS.length}</span>
+            <span className="dim">
+              {needle ? `${universe.length} of ${INSTRUMENTS.length}` : INSTRUMENTS.length}
+            </span>
+          </div>
+          <div className="ticker-search">
+            <input
+              value={tick}
+              onChange={(e) => setTick(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') jumpToFirst();
+                if (e.key === 'Escape') setTick('');
+              }}
+              placeholder="Search ticker"
+              aria-label="Search tickers"
+              spellCheck={false}
+            />
+            {tick && (
+              <button className="ticker-clear" onClick={() => setTick('')} aria-label="Clear search">
+                ×
+              </button>
+            )}
           </div>
           <div className="watchlist">
-            {marks.map((mk) => (
+            {universe.map((mk) => (
               <button
                 key={mk.inst.symbol}
                 className={`wl-row ${mk.inst.symbol === symbol ? 'active' : ''}`}
@@ -134,8 +170,15 @@ export default function App() {
                 <span className={`wl-chg mono ${mk.chg >= 0 ? 'pos' : 'neg'}`}>{fmtSignedPct(mk.chg, 1)}</span>
               </button>
             ))}
+            {!universe.length && (
+              <p className="ticker-none">
+                No symbol matches “{tick}”. Try a ticker (NVDA), a name (Nvidia) or a sector (energy).
+              </p>
+            )}
           </div>
-          <p className="footnote tight">{source === 'sim' ? 'Synthetic marks' : 'Marks for unloaded symbols are synthetic'}</p>
+          <p className="footnote tight">
+            {needle ? 'Enter jumps to the first match · Esc clears' : source === 'sim' ? 'Synthetic marks' : 'Marks for unloaded symbols are synthetic'}
+          </p>
         </div>
 
         <div className="side-section company-card">

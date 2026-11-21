@@ -10,6 +10,7 @@ export interface Bar {
 export interface ItemMeta {
   id: number;
   name: string;
+  /** Buy limit per 4h window. 0 means the venue publishes no limit. */
   limit: number;
   members: boolean;
   examine: string;
@@ -26,6 +27,17 @@ export interface Item {
   meta: ItemMeta;
   bars: Bar[];
   quote: Quote | null;
+}
+
+export type MarketId = 'osrs' | 'rs3' | 'crypto' | 'collectibles';
+
+/** How a venue charges. Absent tax means the venue takes nothing on a sale. */
+export interface MarketRules {
+  tax: { rate: number; cap: number; exemptBelow: number } | null;
+  /** Taker fee in basis points, charged on both entry and exit. */
+  feeBps: number;
+  /** True when the feed publishes a bid and an ask rather than one price. */
+  hasSpread: boolean;
 }
 
 export interface Trade {

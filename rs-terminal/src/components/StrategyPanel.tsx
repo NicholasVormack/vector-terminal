@@ -1,6 +1,6 @@
 import type { ParamDef, Strategy } from '../engine/strategies';
 import { STRATEGIES } from '../engine/strategies';
-import { fmtGp, fmtPct } from '../lib/format';
+import { fmtPct } from '../lib/format';
 
 interface Props {
   strategy: Strategy;
@@ -9,10 +9,18 @@ interface Props {
   onParam: (key: string, value: number) => void;
   capital: number;
   onCapital: (v: number) => void;
+  capitalStep: number;
+  capitalLabel: string;
+  minCapital: number;
+  formatCapital: (v: number) => string;
   sizePct: number;
   onSizePct: (v: number) => void;
   patient: boolean;
   onPatient: (v: boolean) => void;
+  /** False on a venue that publishes one price, where a resting offer means nothing. */
+  hasSpread: boolean;
+  fillNote: string;
+  limitNote: string | null;
 }
 
 function Param({ def, value, onChange }: { def: ParamDef; value: number; onChange: (v: number) => void }) {
@@ -52,10 +60,17 @@ export function StrategyPanel({
   onParam,
   capital,
   onCapital,
+  capitalStep,
+  capitalLabel,
+  minCapital,
+  formatCapital,
   sizePct,
   onSizePct,
   patient,
   onPatient,
+  hasSpread,
+  fillNote,
+  limitNote,
 }: Props) {
   return (
     <>
@@ -77,13 +92,13 @@ export function StrategyPanel({
       <section className="panel-block">
         <h4>Capital</h4>
         <div className="param-head">
-          <label htmlFor="capital">Stack, gp</label>
+          <label htmlFor="capital">{capitalLabel}</label>
           <input
             id="capital"
             className="param-num mono wide"
             type="number"
-            step={1_000_000}
-            min={100_000}
+            step={capitalStep}
+            min={minCapital}
             value={capital}
             onChange={(e) => onCapital(Number(e.target.value))}
           />
@@ -105,26 +120,32 @@ export function StrategyPanel({
           />
         </div>
         <p className="blurb">
-          {fmtGp(capital)} gp is the most one position can use here. The buy limit caps it further: six 4-hour
-          windows per day, so the quantity is also limited to the item&rsquo;s 4-hour limit times six.
+          {formatCapital(capital)} is the most one position can use here.
+          {limitNote ? ` ${limitNote}` : ' This venue publishes no buy limit, so capital is the only cap.'}
         </p>
       </section>
 
       <section className="panel-block">
         <h4>Fills</h4>
-        <div className="seg">
-          <button className={patient ? '' : 'on'} onClick={() => onPatient(false)}>
-            Cross the spread
-          </button>
-          <button className={patient ? 'on' : ''} onClick={() => onPatient(true)}>
-            Patient offers
-          </button>
-        </div>
-        <p className="blurb">
-          {patient
-            ? 'Optimistic: assumes your resting offer fills at the day’s average bid and your sell fills at its average ask. No queue, no partial fills.'
-            : 'Honest default: every entry pays the ask and every exit receives the bid, so each round trip starts down the spread.'}
-        </p>
+        {hasSpread ? (
+          <>
+            <div className="seg">
+              <button className={patient ? '' : 'on'} onClick={() => onPatient(false)}>
+                Cross the spread
+              </button>
+              <button className={patient ? 'on' : ''} onClick={() => onPatient(true)}>
+                Patient offers
+              </button>
+            </div>
+            <p className="blurb">
+              {patient
+                ? 'Optimistic: assumes your resting offer fills at the day’s average bid and your sell fills at its average ask. No queue, no partial fills.'
+                : 'Honest default: every entry pays the ask and every exit receives the bid, so each round trip starts down the spread.'}
+            </p>
+          </>
+        ) : (
+          <p className="blurb">{fillNote}</p>
+        )}
       </section>
     </>
   );

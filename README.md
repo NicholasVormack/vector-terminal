@@ -19,6 +19,38 @@ the candles, axes, crosshair, heatmap and curves are hand-written SVG.
 | **Fundamentals** | Five fiscal years of income statement, balance sheet, cash flow and returns/efficiency ratios, company details, quality heuristic |
 | **Data** | Deterministic offline market simulator (default) or a live Twelve Data feed with a user-supplied key |
 
+## GE TERMINAL — game markets, in dollars
+
+`rs-terminal/` is a second app in the same site, deployed under `/rs-terminal/`. It reuses the same
+engine with different venue rules, and shows four panels:
+
+| Panel | Prices from | Costs modelled |
+| --- | --- | --- |
+| **OSRS** | OSRS Wiki prices API — live quotes, bundled daily series | 2% GE sale tax, spread crossed both ways |
+| **RS3** | Jagex itemdb — 180 daily prices, snapshotted | none: the venue publishes one price a day |
+| **Crypto** | CoinGecko spot — 365 daily closes | 10bps taker fee each side |
+| **Master** | every panel above, plus NFT floors and your own marks | — |
+
+Every gp figure is also shown in dollars. No exchange publishes a gp↔USD rate, so the rate is an
+input: set it directly or derive it from the bond (bond price ÷ its gp cost), and the panel labels
+which one you are looking at.
+
+Graded cards, Littlest Pet Shop, plush and marketplace gold have no free licensed price feed —
+TCGplayer and eBay gate theirs, and Eldorado has no public buyer API — so those rows ship empty and
+are priced in the table. Marks live in your browser's storage.
+
+### Refreshing the data
+
+```bash
+cd rs-terminal
+npm run snapshot        # RS3 + crypto + NFT floors -> public/*.json
+npm run snapshot rs3    # or one source at a time
+```
+
+CoinGecko's free tier allows roughly five calls a minute, so the generator keeps the rows it already
+has and only fetches what is missing. Commit the resulting JSON: the app reads it as a static asset
+and the Pages build never touches the network.
+
 ## Running locally
 
 ```bash

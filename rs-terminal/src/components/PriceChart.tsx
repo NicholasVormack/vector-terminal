@@ -25,7 +25,19 @@ const PRICE_FRAC = 0.76;
 
 export function PriceChart({ bars, overlays, trades, logScale, height = 420 }: Props) {
   const { ref: hostRef, width } = useElementWidth<HTMLDivElement>(900);
-  const [win, setWin] = useState({ s: 0, e: 0 });
+  const [rawWin, setWin] = useState({ s: 0, e: 0 });
+  /**
+   * The zoom window is state, and state outlives a symbol change: switching from a
+   * 365-day series to RS3's 180-day one used to hand the renderer a window past the
+   * end of the data. Clamping here means every consumer sees indices that exist,
+   * on the first render, rather than waiting for the reset effect to catch up.
+   */
+  const win = useMemo(() => {
+    if (!bars.length) return { s: 0, e: 0 };
+    const e = Math.min(rawWin.e || bars.length, bars.length);
+    const s = Math.max(0, Math.min(rawWin.s, Math.max(0, e - 1)));
+    return { s, e };
+  }, [rawWin.s, rawWin.e, bars.length]);
   const [hover, setHover] = useState<{ x: number; y: number; i: number } | null>(null);
   const drag = useRef<{ x: number; s: number; e: number } | null>(null);
 

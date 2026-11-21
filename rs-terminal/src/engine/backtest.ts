@@ -1,12 +1,22 @@
-import type { Bar, EquityPoint, ItemMeta, Trade } from '../types';
+import type { Bar, EquityPoint, ItemMeta, MarketRules, Trade } from '../types';
 import type { Signal } from './strategies';
 
 /** Grand Exchange tax: 2% of the sale, floored per item, capped, nothing under 50 gp. */
 export const GE_TAX = { rate: 0.02, cap: 5_000_000, exemptBelow: 50 } as const;
 
+/** OSRS rules, and the default for anything that does not pass its own. */
+export const OSRS_RULES: MarketRules = { tax: GE_TAX, feeBps: 0, hasSpread: true };
+
 export function taxOn(salePrice: number): number {
   if (!Number.isFinite(salePrice) || salePrice < GE_TAX.exemptBelow) return 0;
   return Math.min(Math.floor(salePrice * GE_TAX.rate), GE_TAX.cap);
+}
+
+function taxFor(rules: MarketRules, salePrice: number): number {
+  const t = rules.tax;
+  if (!t) return 0;
+  if (!Number.isFinite(salePrice) || salePrice < t.exemptBelow) return 0;
+  return Math.min(Math.floor(salePrice * t.rate), t.cap);
 }
 
 export interface Options {
@@ -21,6 +31,8 @@ export interface Options {
    * optimistic case and is labelled as such in the UI.
    */
   patient: boolean;
+  /** Venue costs. Falls back to OSRS for callers that predate this. */
+  rules?: MarketRules;
 }
 
 export interface BacktestResult {
@@ -29,15 +41,21 @@ export interface BacktestResult {
   trades: Trade[];
   exposure: number[];
   taxPaid: number;
+  /** Taker fees on both sides, kept apart from tax because venues charge one or the other. */
+  feesPaid: number;
   openQty: number;
   openValue: number;
 }
 
 /**
- * Long-or-gp loop. A signal read on bar i's close fills at bar i+1's average
+ * Long-or-cash loop. A signal read on bar i's close fills at bar i+1's average
  * instant-buy price (h) on entry and instant-sell price (l) on exit, so every
- * round trip pays the spread and the tax. Equity marks a held position at the
- * bid, i.e. what it would fetch if liquidated on that bar.
+ * round trip pays the spread and the venue's cut. Equity marks a held position
+ * at the bid, i.e. what it would fetch if liquidated on that bar.
+ *
+ * A venue that publishes one price per day (RS3, crypto) has no spread to cross,
+ * so h === l there and the spread charge is zero by construction rather than
+ * assumed away.
  */
 export function runBacktest(
   bars: Bar[],
@@ -45,19 +63,22 @@ export function runBacktest(
   signals: Signal[],
   opts: Options,
 ): BacktestResult {
+  const rules = opts.rules ?? OSRS_RULES;
+  const fee = rules.feeBps / 10_000;
   const equity: EquityPoint[] = [];
   const benchmark: EquityPoint[] = [];
   const trades: Trade[] = [];
   const exposure: number[] = [];
   let taxPaid = 0;
+  let feesPaid = 0;
 
   if (bars.length < 2) {
-    return { equity, benchmark, trades, exposure, taxPaid, openQty: 0, openValue: 0 };
+    return { equity, benchmark, trades, exposure, taxPaid, feesPaid, openQty: 0, openValue: 0 };
   }
 
   // Benchmark: buy on the first bar at the ask, mark at the bid for the rest.
-  const benchUnits = Math.floor(opts.capital / bars[0].h);
-  const benchCash = opts.capital - benchUnits * bars[0].h;
+  const benchUnits = Math.floor(opts.capital / (bars[0].h * (1 + fee)));
+  const benchCash = opts.capital - benchUnits * bars[0].h * (1 + fee);
 
   let cash = opts.capital;
   let qty = 0;
@@ -70,21 +91,24 @@ export function runBacktest(
 
     if (qty === 0 && sig > 0) {
       const px = opts.patient ? bar.l : bar.h;
-      const want = Math.floor((cash * opts.sizePct) / px);
-      const limitCap = Math.floor(meta.limit * opts.windowsPerDay);
-      const q = Math.max(0, Math.min(want, limitCap, Math.floor(cash / px)));
+      const unitCost = px * (1 + fee);
+      const want = Math.floor((cash * opts.sizePct) / unitCost);
+      const limitCap = meta.limit > 0 ? Math.floor(meta.limit * opts.windowsPerDay) : Infinity;
+      const q = Math.max(0, Math.min(want, limitCap, Math.floor(cash / unitCost)));
       if (q > 0) {
-        cash -= q * px;
+        cash -= q * unitCost;
+        feesPaid += q * px * fee;
         qty = q;
-        entryPx = px;
+        entryPx = unitCost;
         entryI = i;
       }
     } else if (qty > 0 && sig < 0) {
       const bid = opts.patient ? bar.h : bar.l;
       const gross = qty * bid;
-      const tax = taxOn(bid) * qty;
-      cash += gross - tax;
+      const tax = taxFor(rules, bid) * qty;
+      cash += gross - gross * fee - tax;
       taxPaid += tax;
+      feesPaid += gross * fee;
       trades.push({
         entryI,
         exitI: i,
@@ -95,8 +119,8 @@ export function runBacktest(
         qty,
         gross,
         tax,
-        pnl: gross - tax - qty * entryPx,
-        ret: bid / entryPx - 1,
+        pnl: gross - gross * fee - tax - qty * entryPx,
+        ret: (bid * (1 - fee)) / entryPx - 1,
         barsHeld: i - entryI,
         reason: 'signal',
       });
@@ -104,19 +128,20 @@ export function runBacktest(
       entryI = -1;
     }
 
-    const mark = qty > 0 ? qty * bar.l : 0;
+    const mark = qty > 0 ? qty * bar.l * (1 - fee) : 0;
     equity.push({ t: bar.t, v: cash + mark });
     exposure.push(qty > 0 ? 1 : 0);
-    benchmark.push({ t: bar.t, v: benchCash + benchUnits * bar.l });
+    benchmark.push({ t: bar.t, v: benchCash + benchUnits * bar.l * (1 - fee) });
   }
 
   const last = bars[bars.length - 1];
   if (qty > 0) {
     const bid = opts.patient ? last.h : last.l;
     const gross = qty * bid;
-    const tax = taxOn(bid) * qty;
-    cash += gross - tax;
+    const tax = taxFor(rules, bid) * qty;
+    cash += gross - gross * fee - tax;
     taxPaid += tax;
+    feesPaid += gross * fee;
     trades.push({
       entryI,
       exitI: bars.length - 1,
@@ -127,8 +152,8 @@ export function runBacktest(
       qty,
       gross,
       tax,
-      pnl: gross - tax - qty * entryPx,
-      ret: bid / entryPx - 1,
+      pnl: gross - gross * fee - tax - qty * entryPx,
+      ret: (bid * (1 - fee)) / entryPx - 1,
       barsHeld: bars.length - 1 - entryI,
       reason: 'end of sample',
     });
@@ -141,6 +166,7 @@ export function runBacktest(
     trades,
     exposure,
     taxPaid,
+    feesPaid,
     openQty: qty,
     openValue: cash,
   };
