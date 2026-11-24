@@ -8,6 +8,8 @@ backtester with modelled execution costs, performance analytics, and a fundament
 Built with Vite, React and TypeScript. **No charting library, no UI library, no CSS framework** —
 the candles, axes, crosshair, heatmap and curves are hand-written SVG.
 
+![VECTOR: the universe rail, a candlestick chart with SMA overlays and trade markers, strategy and execution controls, and the performance panel](docs/vector-terminal.png)
+
 ---
 
 ## What it does
@@ -32,6 +34,8 @@ engine with different venue rules, and shows four panels:
 | **RS3** | Jagex itemdb — 180 daily prices, snapshotted | none: the venue publishes one price a day |
 | **Crypto** | CoinGecko spot — 365 daily closes | 10bps taker fee each side |
 | **Master** | every panel above, plus NFT floors and your own marks | — |
+
+![GE TERMINAL: OSRS item rail with gp and dollar prices beside an equity curve, drawdown curve and the full performance panel](docs/ge-terminal.png)
 
 Every gp figure is also shown in dollars. No exchange publishes a gp↔USD rate, so the rate is an
 input: set it directly or derive it from the bond (bond price ÷ its gp cost), and the panel labels
@@ -73,6 +77,11 @@ without editing the repo name anywhere.
    could skip a push.
 
 For a private repository, Pages requires a plan that supports it; a public repo deploys on the free tier.
+
+The social preview card (`docs/social-preview.png`, 1200×630) is generated from
+`docs/social-preview.html` — open it at a 1280×720 viewport, screenshot to
+`docs/social-card-raw.png`, then run `scripts/social-preview.sh` to crop it. GitHub has no API for
+this slot, so upload the PNG under **Settings → Social preview**.
 
 ## Architecture
 
