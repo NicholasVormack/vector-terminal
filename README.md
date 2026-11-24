@@ -1,5 +1,7 @@
 # VECTOR — Research Terminal
 
+**Live demo:** [VECTOR](https://nicholasvormack.github.io/vector-terminal/) · [GE TERMINAL](https://nicholasvormack.github.io/vector-terminal/rs-terminal/) (OSRS, RS3, crypto and collectibles)
+
 A from-scratch equity research terminal: hand-rendered candlestick charting, an event-driven
 backtester with modelled execution costs, performance analytics, and a fundamentals view.
 
