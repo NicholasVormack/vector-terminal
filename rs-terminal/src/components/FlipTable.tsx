@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import type { Item, MarketRules } from '../types';
+import { WINDOWS_PER_DAY, taxFor } from '../engine/backtest';
 import { fmtGp, fmtGpShort, fmtPct, fmtSignedPct, fmtUsd } from '../lib/format';
 import { gpToUsd } from '../data/fx';
 
@@ -28,9 +29,6 @@ interface Row {
   limit: number;
 }
 
-/** 4-hour windows in a day; the buy limit resets on that cycle. */
-const WINDOWS = 6;
-
 export function FlipTable({ items, selectedId, onSelect, rules, usdPerM, native }: Props) {
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
@@ -42,8 +40,7 @@ export function FlipTable({ items, selectedId, onSelect, rules, usdPerM, native 
       const bid = it.quote?.bid ?? last.l;
       const mid = (ask + bid) / 2;
       if (!bid || !ask) continue;
-      const t = rules.tax;
-      const tax = t && ask >= t.exemptBelow ? Math.min(Math.floor(ask * t.rate), t.cap) : 0;
+      const tax = taxFor(rules, ask);
       const fee = ((ask + bid) * rules.feeBps) / 10_000;
       const margin = ask - tax - fee - bid;
 
@@ -67,7 +64,8 @@ export function FlipTable({ items, selectedId, onSelect, rules, usdPerM, native 
         margin,
         roi: margin / bid,
         volume: last.v,
-        capacity: it.meta.limit > 0 ? it.meta.limit * WINDOWS * ask : NaN,
+        // The buy limit resets every four hours, so a day holds six windows of it.
+        capacity: it.meta.limit > 0 ? it.meta.limit * WINDOWS_PER_DAY * ask : NaN,
         vol30: sd * Math.sqrt(365),
         limit: it.meta.limit,
       });
@@ -76,7 +74,7 @@ export function FlipTable({ items, selectedId, onSelect, rules, usdPerM, native 
   }, [items, rules]);
 
   const money = (v: number, short = false) =>
-    native === 'gp' ? (short ? fmtGpShort(v) : fmtGp(v)) : short ? fmtUsd(v) : fmtUsd(v);
+    native === 'gp' ? (short ? fmtGpShort(v) : fmtGp(v)) : fmtUsd(v);
   const hasLimit = rows.some((r) => r.limit > 0);
   const hasVolume = rows.some((r) => r.volume > 0);
 

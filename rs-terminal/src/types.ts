@@ -31,6 +31,13 @@ export interface Item {
 
 export type MarketId = 'osrs' | 'rs3' | 'crypto' | 'collectibles';
 
+/** One venue's panel: its items, whether the quotes are fresh, and the series date. */
+export interface MarketLoad {
+  items: Item[];
+  source: 'snapshot' | 'live';
+  asOf: number;
+}
+
 /** How a venue charges. Absent tax means the venue takes nothing on a sale. */
 export interface MarketRules {
   tax: { rate: number; cap: number; exemptBelow: number } | null;
@@ -70,6 +77,8 @@ export interface Metrics {
   sortino: number;
   maxDD: number;
   maxDDDays: number;
+  /** Equity peak the max drawdown was measured from. */
+  maxDDPeak: number;
   longestUnderwater: number;
   calmar: number;
   winRate: number;

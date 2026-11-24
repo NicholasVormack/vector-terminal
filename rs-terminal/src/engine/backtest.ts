@@ -4,15 +4,11 @@ import type { Signal } from './strategies';
 /** Grand Exchange tax: 2% of the sale, floored per item, capped, nothing under 50 gp. */
 export const GE_TAX = { rate: 0.02, cap: 5_000_000, exemptBelow: 50 } as const;
 
-/** OSRS rules, and the default for anything that does not pass its own. */
-export const OSRS_RULES: MarketRules = { tax: GE_TAX, feeBps: 0, hasSpread: true };
+/** 4-hour buy-limit windows inside one daily bar. */
+export const WINDOWS_PER_DAY = 6;
 
-export function taxOn(salePrice: number): number {
-  if (!Number.isFinite(salePrice) || salePrice < GE_TAX.exemptBelow) return 0;
-  return Math.min(Math.floor(salePrice * GE_TAX.rate), GE_TAX.cap);
-}
-
-function taxFor(rules: MarketRules, salePrice: number): number {
+/** The venue's cut on one unit sold at this price. */
+export function taxFor(rules: MarketRules, salePrice: number): number {
   const t = rules.tax;
   if (!t) return 0;
   if (!Number.isFinite(salePrice) || salePrice < t.exemptBelow) return 0;
@@ -31,8 +27,14 @@ export interface Options {
    * optimistic case and is labelled as such in the UI.
    */
   patient: boolean;
-  /** Venue costs. Falls back to OSRS for callers that predate this. */
-  rules?: MarketRules;
+  /** Venue costs: tax, taker fee and whether the feed quotes a spread. */
+  rules: MarketRules;
+  /**
+   * An item is indivisible, so a stack that cannot afford one unit cannot trade it.
+   * A coin can be bought in fractions, so crypto sizes from capital without rounding
+   * down to zero.
+   */
+  wholeUnits: boolean;
 }
 
 export interface BacktestResult {
@@ -43,8 +45,8 @@ export interface BacktestResult {
   taxPaid: number;
   /** Taker fees on both sides, kept apart from tax because venues charge one or the other. */
   feesPaid: number;
-  openQty: number;
-  openValue: number;
+  /** Units the stack could buy on bar one; zero means the item is out of reach. */
+  benchUnits: number;
 }
 
 /**
@@ -63,7 +65,7 @@ export function runBacktest(
   signals: Signal[],
   opts: Options,
 ): BacktestResult {
-  const rules = opts.rules ?? OSRS_RULES;
+  const rules = opts.rules;
   const fee = rules.feeBps / 10_000;
   const equity: EquityPoint[] = [];
   const benchmark: EquityPoint[] = [];
@@ -73,12 +75,19 @@ export function runBacktest(
   let feesPaid = 0;
 
   if (bars.length < 2) {
-    return { equity, benchmark, trades, exposure, taxPaid, feesPaid, openQty: 0, openValue: 0 };
+    return { equity, benchmark, trades, exposure, taxPaid, feesPaid, benchUnits: 0 };
   }
 
+  /** Units a budget buys: whole items round down, coins do not round at all. */
+  const units = (budget: number, unitCost: number) => {
+    if (!(unitCost > 0)) return 0;
+    const raw = budget / unitCost;
+    return opts.wholeUnits ? Math.floor(raw) : Math.max(0, raw);
+  };
+
   // Benchmark: buy on the first bar at the ask, mark at the bid for the rest.
-  const benchUnits = Math.floor(opts.capital / (bars[0].h * (1 + fee)));
-  const benchCash = opts.capital - benchUnits * bars[0].h * (1 + fee);
+  const benchUnits = units(opts.capital, bars[0].h * (1 + fee));
+  const benchCash = Math.max(0, opts.capital - benchUnits * bars[0].h * (1 + fee));
 
   let cash = opts.capital;
   let qty = 0;
@@ -92,11 +101,11 @@ export function runBacktest(
     if (qty === 0 && sig > 0) {
       const px = opts.patient ? bar.l : bar.h;
       const unitCost = px * (1 + fee);
-      const want = Math.floor((cash * opts.sizePct) / unitCost);
+      const want = units(cash * opts.sizePct, unitCost);
       const limitCap = meta.limit > 0 ? Math.floor(meta.limit * opts.windowsPerDay) : Infinity;
-      const q = Math.max(0, Math.min(want, limitCap, Math.floor(cash / unitCost)));
+      const q = Math.max(0, Math.min(want, limitCap, units(cash, unitCost)));
       if (q > 0) {
-        cash -= q * unitCost;
+        cash = Math.max(0, cash - q * unitCost);
         feesPaid += q * px * fee;
         qty = q;
         entryPx = unitCost;
@@ -157,17 +166,7 @@ export function runBacktest(
       barsHeld: bars.length - 1 - entryI,
       reason: 'end of sample',
     });
-    qty = 0;
   }
 
-  return {
-    equity,
-    benchmark,
-    trades,
-    exposure,
-    taxPaid,
-    feesPaid,
-    openQty: qty,
-    openValue: cash,
-  };
+  return { equity, benchmark, trades, exposure, taxPaid, feesPaid, benchUnits };
 }

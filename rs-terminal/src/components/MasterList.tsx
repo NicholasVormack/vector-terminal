@@ -8,6 +8,7 @@ import {
   buildMasterRows,
   parseFeed,
   refreshNftFloor,
+  useCustomRows,
   useOverrides,
 } from '../data/collectibles';
 import { fmtDate, fmtGpShort, fmtPct, fmtPriceUsd, fmtSignedPct, fmtUsd } from '../lib/format';
@@ -25,6 +26,7 @@ type SortKey = 'name' | 'usd' | 'chg24' | 'chg30' | 'category';
 
 export function MasterList({ osrs, rs3, crypto, nfts, nftAsOf, fx }: Props) {
   const { overrides, setMark } = useOverrides();
+  const { custom, addRow, removeRow } = useCustomRows();
   const [query, setQuery] = useState('');
   const [cat, setCat] = useState<Category | 'all'>('all');
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'usd', dir: -1 });
@@ -32,10 +34,11 @@ export function MasterList({ osrs, rs3, crypto, nfts, nftAsOf, fx }: Props) {
   const [feedNote, setFeedNote] = useState('');
   const [floors, setFloors] = useState<NftRow[] | null>(nfts);
   const [refreshing, setRefreshing] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
 
   const rows = useMemo(
-    () => buildMasterRows({ osrs, rs3, crypto, nfts: floors, overrides }),
-    [osrs, rs3, crypto, floors, overrides],
+    () => buildMasterRows({ osrs, rs3, crypto, nfts: floors, overrides, custom }),
+    [osrs, rs3, crypto, floors, overrides, custom],
   );
 
   const usdOf = (row: { priceKind: 'gp' | 'usd'; native: number | null; category: Category }) => {
@@ -43,6 +46,9 @@ export function MasterList({ osrs, rs3, crypto, nfts, nftAsOf, fx }: Props) {
     if (row.priceKind === 'usd') return row.native;
     return gpToUsd(row.native, row.category === 'rs3' ? fx.rs3UsdPerM : fx.osrsUsdPerM);
   };
+
+  /** The open row survives filtering, so clicking one and then searching does not drop it. */
+  const sel = selected ? (rows.find((r) => r.id === selected) ?? null) : null;
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -103,19 +109,37 @@ export function MasterList({ osrs, rs3, crypto, nfts, nftAsOf, fx }: Props) {
       return;
     }
     let hits = 0;
+    let added = 0;
+    let lastNew: string | null = null;
     for (const p of parsed) {
-      const target = rows.find(
+      // One pasted name can contain another row's whole name — "LPS #675" holds
+      // "LPS #67" — so the exact name wins, then the longest one that fits.
+      const pasted = p.name.trim().toLowerCase();
+      const candidates = rows.filter(
         (r) =>
-          r.manual &&
-          (r.name.toLowerCase().includes(p.name.toLowerCase()) ||
-            p.name.toLowerCase().includes(r.name.toLowerCase())),
+          !r.live &&
+          (r.name.toLowerCase() === pasted ||
+            r.name.toLowerCase().includes(pasted) ||
+            pasted.includes(r.name.toLowerCase())),
       );
-      if (target) {
+      const target =
+        candidates.find((r) => r.name.toLowerCase() === pasted) ??
+        candidates.sort((a, b) => b.name.length - a.name.length)[0];
+      if (!target) {
+        lastNew = addRow(p.name, p.usd);
+        added += 1;
+      } else if (target.category === 'feed') {
+        // Re-pasting a row the feed made updates it, rather than stacking a mark
+        // on top of the price it was created with.
+        addRow(target.name, p.usd);
+        hits += 1;
+      } else {
         setMark(target.id, p.usd);
         hits += 1;
       }
     }
-    setFeedNote(`Parsed ${parsed.length} rows, matched ${hits}. The rest had no row to land on.`);
+    if (lastNew) setSelected(lastNew);
+    setFeedNote(`Parsed ${parsed.length} rows: ${hits} matched a row, ${added} added as new.`);
   }
 
   return (
@@ -124,8 +148,8 @@ export function MasterList({ osrs, rs3, crypto, nfts, nftAsOf, fx }: Props) {
         <div>
           <h1>Master list</h1>
           <p className="master-sub">
-            Every market this terminal watches, in dollars, with the provenance of each number attached. Rows
-            without a public feed are yours to price.
+            Every market this terminal watches, in dollars, with the provenance of each number attached. Click a
+            row to see what it is worth; rows without a public feed are yours to price.
           </p>
         </div>
         <div className="master-stats">
@@ -173,6 +197,76 @@ export function MasterList({ osrs, rs3, crypto, nfts, nftAsOf, fx }: Props) {
         </div>
       </div>
 
+      {sel && (
+        <section className="master-pick" aria-live="polite">
+          <div className="mp-main">
+            <span className={`cat-tag cat-${sel.category}`}>{sel.category}</span>
+            <h2>{sel.name}</h2>
+            <p className="mp-detail">
+              {sel.detail} · {sel.unit}
+            </p>
+          </div>
+          <div className="mp-worth">
+            <span>Worth</span>
+            <b className="mono">{Number.isFinite(usdOf(sel)) ? fmtPriceUsd(usdOf(sel)) : '—'}</b>
+            <em>
+              {sel.live
+                ? `${sel.source}${sel.asOf ? ` · ${fmtDate(sel.asOf)}` : ''}`
+                : 'your mark, stored in this browser'}
+            </em>
+          </div>
+          {sel.priceKind === 'gp' && sel.native != null && (
+            <div className="mp-worth">
+              <span>Price</span>
+              <b className="mono">{fmtGpShort(sel.native)} gp</b>
+              <em>mid of the last quote</em>
+            </div>
+          )}
+          {sel.alt != null && (
+            <div className="mp-worth">
+              <span>Quoted in</span>
+              <b className="mono">{`${sel.alt.toFixed(2)} ${sel.altUnit ?? ''}`.trim()}</b>
+              <em>venue unit</em>
+            </div>
+          )}
+          {!sel.live && (
+            <label className="mp-mark">
+              <span>Set worth, USD</span>
+              <input
+                key={`pick-${sel.id}-${sel.native ?? 'none'}`}
+                className="mark-input mono"
+                type="number"
+                min={0}
+                step="0.01"
+                defaultValue={sel.native != null ? Number(sel.native.toFixed(2)) : ''}
+                placeholder="set"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  setMark(sel.id, v === '' ? null : Number(v));
+                }}
+              />
+            </label>
+          )}
+          {sel.category === 'feed' && (
+            <button
+              className="link-btn"
+              onClick={() => {
+                removeRow(sel.id);
+                setSelected(null);
+              }}
+            >
+              remove row
+            </button>
+          )}
+          <button className="link-btn mp-close" onClick={() => setSelected(null)}>
+            close
+          </button>
+        </section>
+      )}
+
       <div className="table-wrap master-wrap">
         <table className="master-table">
           <thead>
@@ -202,7 +296,13 @@ export function MasterList({ osrs, rs3, crypto, nfts, nftAsOf, fx }: Props) {
                       ? `${fmtGpShort(r.native)} gp`
                       : '—';
               return (
-                <tr key={r.id} className={r.manual && r.native == null ? 'unpriced' : ''}>
+                <tr
+                  key={r.id}
+                  className={[!r.live && r.native == null ? 'unpriced' : '', selected === r.id ? 'sel' : '']
+                    .filter(Boolean)
+                    .join(' ')}
+                  onClick={() => setSelected(r.id)}
+                >
                   <td>
                     <span className="m-name">{r.name}</span>
                     <span className="m-detail">{r.detail}</span>
@@ -212,7 +312,7 @@ export function MasterList({ osrs, rs3, crypto, nfts, nftAsOf, fx }: Props) {
                   </td>
                   <td className="num mono">{price}</td>
                   <td className={`num mono ${usd > 0 ? '' : 'dim'}`}>
-                    {Number.isFinite(usd) ? (r.manual ? fmtPriceUsd(usd) : fmtUsd(usd)) : '—'}
+                    {Number.isFinite(usd) ? (r.live ? fmtUsd(usd) : fmtPriceUsd(usd)) : '—'}
                   </td>
                   <td className={`num mono ${r.chg24 == null ? 'dim' : r.chg24 >= 0 ? 'pos' : 'neg'}`}>
                     {r.chg24 == null ? '—' : fmtSignedPct(r.chg24, 1)}
@@ -234,8 +334,8 @@ export function MasterList({ osrs, rs3, crypto, nfts, nftAsOf, fx }: Props) {
                       type="number"
                       min={0}
                       step="0.01"
-                      defaultValue={r.manual && r.native != null ? Number(r.native.toFixed(2)) : ''}
-                      placeholder={r.manual ? 'set' : '—'}
+                      defaultValue={!r.live && r.native != null ? Number(r.native.toFixed(2)) : ''}
+                      placeholder={r.live ? '—' : 'set'}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
                       }}
@@ -269,7 +369,8 @@ export function MasterList({ osrs, rs3, crypto, nfts, nftAsOf, fx }: Props) {
             Eldorado has no public buyer API — its seller API needs 50 verified sales and covers your own offers
             only — and G2G publishes none at all. PlayerAuctions gates even its offer queries behind an HMAC-signed
             seller key. So rather than ship a scraper that breaks on their next deploy, this takes the rows you
-            can already see: <code>OSRS gold, 0.19</code> per line, tab or comma separated.
+            can already see: <code>OSRS gold, 0.19</code> per line, tab or comma separated. A name with no
+            catalogue row is added to the list under Feed.
           </p>
           <textarea
             className="feed-box"

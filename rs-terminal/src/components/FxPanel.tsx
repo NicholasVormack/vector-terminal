@@ -1,5 +1,5 @@
 import type { FxConfig } from '../data/fx';
-import { bondImpliedUsdPerM } from '../data/fx';
+import { bondImpliedUsdPerM, fxFor } from '../data/fx';
 import { fmtUsd } from '../lib/format';
 
 interface Props {
@@ -18,7 +18,8 @@ interface Props {
  * quote, and the panel says so.
  */
 export function FxPanel({ market, fx, patch, reset }: Props) {
-  const rate = market === 'rs3' ? fx.rs3UsdPerM : fx.osrsUsdPerM;
+  const rate = fxFor(fx, market);
+  const setRate = (v: number) => patch(market === 'rs3' ? { rs3UsdPerM: v } : { osrsUsdPerM: v });
   const implied = bondImpliedUsdPerM(fx.bondGp, fx.bondUsd);
 
   return (
@@ -32,10 +33,8 @@ export function FxPanel({ market, fx, patch, reset }: Props) {
           type="number"
           min={0}
           step={0.001}
-          value={market === 'rs3' ? fx.rs3UsdPerM : fx.osrsUsdPerM}
-          onChange={(e) =>
-            patch(market === 'rs3' ? { rs3UsdPerM: Number(e.target.value) } : { osrsUsdPerM: Number(e.target.value) })
-          }
+          value={rate}
+          onChange={(e) => setRate(Number(e.target.value))}
         />
       </div>
       <p className="blurb">
@@ -77,9 +76,7 @@ export function FxPanel({ market, fx, patch, reset }: Props) {
         <button
           className="btn sm wide"
           disabled={implied <= 0}
-          onClick={() =>
-            patch({ osrsUsdPerM: implied, method: 'bond', asOf: Date.now() })
-          }
+          onClick={() => patch({ osrsUsdPerM: implied })}
         >
           Use {market === 'rs3' ? 'for OSRS too' : 'bond rate'}
         </button>

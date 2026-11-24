@@ -34,6 +34,8 @@ export function maxDrawdown(series: EquityPoint[]) {
   let peakT = series.length ? series[0].t : 0;
   let mdd = 0;
   let mddDays = 0;
+  /** Equity peak the worst trough was measured against, so the loss can be priced. */
+  let mddPeak = 0;
   let underwater = -1;
   let longest = 0;
 
@@ -51,13 +53,14 @@ export function maxDrawdown(series: EquityPoint[]) {
       if (dd < mdd) {
         mdd = dd;
         mddDays = (p.t - peakT) / 86_400_000;
+        mddPeak = peak;
       }
     }
   }
   if (underwater >= 0 && series.length) {
     longest = Math.max(longest, (series[series.length - 1].t - underwater) / 86_400_000);
   }
-  return { mdd, mddDays, longest: longest > 0 ? longest : mddDays };
+  return { mdd, mddDays, mddPeak, longest: longest > 0 ? longest : mddDays };
 }
 
 const emptyMetrics: Metrics = {
@@ -69,6 +72,7 @@ const emptyMetrics: Metrics = {
   sortino: 0,
   maxDD: 0,
   maxDDDays: 0,
+  maxDDPeak: 0,
   longestUnderwater: 0,
   calmar: 0,
   winRate: 0,
@@ -140,6 +144,7 @@ export function computeMetrics(
     sortino,
     maxDD: dd.mdd,
     maxDDDays: dd.mddDays,
+    maxDDPeak: dd.mddPeak,
     longestUnderwater: dd.longest,
     calmar: dd.mdd < 0 ? cagr / Math.abs(dd.mdd) : 0,
     winRate: trades.length ? wins.length / trades.length : 0,

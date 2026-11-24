@@ -201,7 +201,9 @@ async function buildCrypto() {
       if (rows.length < 60) throw new Error(`only ${rows.length} days`);
       const q = quotes[id] ?? {};
       coins.push({
-        id: coins.length + 1,
+        // Kept rows already hold an id, so a new coin must clear the highest one in
+        // hand rather than the array length, or it takes a number already in use.
+        id: Math.max(0, ...coins.map((c) => c.id)) + 1,
         slug: id,
         symbol: q.symbol ?? id.slice(0, 4).toUpperCase(),
         name: q.name ?? id,

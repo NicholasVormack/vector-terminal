@@ -1,4 +1,4 @@
-import type { Bar, Item } from '../types';
+import type { Bar, Item, MarketLoad } from '../types';
 
 /**
  * RS3, from Jagex's own itemdb.
@@ -29,13 +29,7 @@ interface Rs3Snapshot {
 
 const URL = `${import.meta.env.BASE_URL}rs3-snapshot.json`;
 
-export interface MarketLoad {
-  items: Item[];
-  source: 'snapshot' | 'live';
-  asOf: number;
-}
-
-export function closeBars(rows: [number, number][]): Bar[] {
+function closeBars(rows: [number, number][]): Bar[] {
   const bars: Bar[] = [];
   for (const [t, p] of rows) {
     if (!Number.isFinite(t) || !Number.isFinite(p) || p <= 0) continue;

@@ -14,11 +14,8 @@ import { useCallback, useEffect, useState } from 'react';
 export interface FxConfig {
   osrsUsdPerM: number;
   rs3UsdPerM: number;
-  /** Which way the OSRS number was arrived at. */
-  method: 'reference' | 'bond' | 'manual';
   bondGp: number;
   bondUsd: number;
-  asOf: number;
 }
 
 const KEY = 'gt-fx-v1';
@@ -26,10 +23,8 @@ const KEY = 'gt-fx-v1';
 export const DEFAULT_FX: FxConfig = {
   osrsUsdPerM: 0.18,
   rs3UsdPerM: 0.045,
-  method: 'reference',
   bondGp: 0,
   bondUsd: 0,
-  asOf: Date.parse('2026-11-20'),
 };
 
 export function bondImpliedUsdPerM(bondGp: number, bondUsd: number): number {

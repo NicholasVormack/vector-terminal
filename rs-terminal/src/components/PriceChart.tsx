@@ -261,7 +261,7 @@ export function PriceChart({ bars, overlays, trades, logScale, height = 420 }: P
                   fill="var(--up)"
                   opacity={0.95}
                 >
-                  <title>{`Buy ${fmtDate(tr.entryT)} @ ${fmtGp(tr.entryPx)} gp x${tr.qty}`}</title>
+                  <title>{`Buy ${fmtDate(tr.entryT)} @ ${fmtGp(tr.entryPx)} gp x${tr.qty.toLocaleString('en-US', { maximumFractionDigits: 6 })}`}</title>
                 </polygon>,
               );
             }

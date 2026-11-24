@@ -1,4 +1,4 @@
-import type { Bar, Item } from '../types';
+import type { Bar, Item, MarketLoad } from '../types';
 
 interface SnapItem {
   id: number;
@@ -68,12 +68,6 @@ export function toBars(rows: number[][]): Bar[] {
     });
   }
   return bars;
-}
-
-export interface MarketLoad {
-  items: Item[];
-  source: 'snapshot' | 'live';
-  asOf: number;
 }
 
 export async function loadMarket(): Promise<MarketLoad> {

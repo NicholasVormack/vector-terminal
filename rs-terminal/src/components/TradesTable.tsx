@@ -50,7 +50,9 @@ export function TradesTable({ trades, money, signed, usd, taxLabel }: Props) {
                 {t.reason === 'end of sample' && <span className="flag">EOS</span>}
               </td>
               <td className="num mono">{t.barsHeld}</td>
-              <td className="num mono">{t.qty.toLocaleString('en-US')}</td>
+              <td className="num mono">
+                {t.qty.toLocaleString('en-US', { maximumFractionDigits: 6 })}
+              </td>
               <td className="num mono">{money(t.entryPx)}</td>
               <td className="num mono">{money(t.exitPx)}</td>
               <td className="num mono dim">{t.tax > 0 ? money(t.tax) : '—'}</td>

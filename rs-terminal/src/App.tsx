@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { EquityPoint, MarketId } from './types';
+import type { EquityPoint, MarketId, MarketLoad } from './types';
 import { loadMarket, refreshSeries } from './data/api';
-import type { MarketLoad } from './data/api';
 import { loadRs3 } from './data/rs3';
 import { fetchQuotes, loadCrypto, refreshCryptoSeries } from './data/crypto';
 import type { CryptoLoad } from './data/crypto';
@@ -10,7 +9,7 @@ import type { NftRow } from './data/collectibles';
 import { isGoldMarket, marketById } from './data/markets';
 import { fxFor, gpToUsd, useFx } from './data/fx';
 import { defaultParams, strategyById } from './engine/strategies';
-import { runBacktest } from './engine/backtest';
+import { WINDOWS_PER_DAY, runBacktest, taxFor } from './engine/backtest';
 import { computeMetrics, drawdownSeries } from './engine/metrics';
 import { closes, sma } from './engine/indicators';
 import { PriceChart } from './components/PriceChart';
@@ -34,8 +33,6 @@ import {
   fmtUsd,
   fmtUsdShort,
 } from './lib/format';
-
-const WINDOWS_PER_DAY = 6;
 
 const TABS = [
   { id: 'perf', label: 'Performance' },
@@ -61,12 +58,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
 
   const [picked, setPicked] = useState<Record<MarketId, number>>(FIRST_PICK);
-  const [caps, setCaps] = useState<Record<MarketId, number>>({
-    osrs: 10_000_000,
-    rs3: 500_000_000,
-    crypto: 10_000,
-    collectibles: 10_000,
-  });
+  /** Only the venues the user has retyped have an entry; the rest fall back to def.capital. */
+  const [caps, setCaps] = useState<Partial<Record<MarketId, number>>>({});
   const [strategyId, setStrategyId] = useState('sma-cross');
   const [params, setParams] = useState<Record<string, Record<string, number>>>({});
   const [tab, setTab] = useState<TabId>('perf');
@@ -76,15 +69,24 @@ export function App() {
   const [query, setQuery] = useState('');
 
   const refreshedCoins = useRef(new Set<string>());
-  const quotedCoins = useRef(false);
 
   useEffect(() => {
     let alive = true;
+
+    /** Keep the pick when this snapshot still lists it, else fall to the first row. */
+    const settle = (id: MarketId, m: MarketLoad) =>
+      setPicked((p) => {
+        if (m.items.some((i) => i.meta.id === p[id])) return p;
+        const next = { ...p };
+        next[id] = m.items[0]?.meta.id ?? 0;
+        return next;
+      });
+
     loadMarket()
       .then((m) => {
         if (!alive) return;
         setOsrs(m);
-        setPicked((p) => (m.items.some((i) => i.meta.id === p.osrs) ? p : { ...p, osrs: m.items[0]?.meta.id ?? 0 }));
+        settle('osrs', m);
       })
       .catch((e: unknown) => alive && setError(String(e)));
 
@@ -92,7 +94,7 @@ export function App() {
       .then((m) => {
         if (!alive) return;
         setRs3(m);
-        setPicked((p) => (m.items.some((i) => i.meta.id === p.rs3) ? p : { ...p, rs3: m.items[0]?.meta.id ?? 0 }));
+        settle('rs3', m);
       })
       .catch(() => undefined);
 
@@ -100,7 +102,24 @@ export function App() {
       .then((m) => {
         if (!alive) return;
         setCrypto(m);
-        setPicked((p) => (m.items.some((i) => i.meta.id === p.crypto) ? p : { ...p, crypto: m.items[0]?.meta.id ?? 0 }));
+        settle('crypto', m);
+        // One bulk quote call covers every coin in the panel, so it is worth one request.
+        const slugs = m.items.map((i) => m.slugById.get(i.meta.id) ?? '').filter(Boolean);
+        fetchQuotes(slugs).then((prices) => {
+          if (!alive || !prices) return;
+          setCrypto((c) =>
+            c
+              ? {
+                  ...c,
+                  source: 'live',
+                  items: c.items.map((it) => {
+                    const px = prices.get(c.slugById.get(it.meta.id) ?? '');
+                    return px ? { ...it, quote: { ask: px, bid: px, t: Date.now() } } : it;
+                  }),
+                }
+              : c,
+          );
+        });
       })
       .catch(() => undefined);
 
@@ -114,30 +133,6 @@ export function App() {
       alive = false;
     };
   }, []);
-
-  /** One bulk quote call covers every coin in the panel, so it is worth one request. */
-  useEffect(() => {
-    if (!crypto || quotedCoins.current || !crypto.items.length) return;
-    quotedCoins.current = true;
-    const slugs = crypto.items.map((i) => crypto.slugById.get(i.meta.id) ?? '').filter(Boolean);
-    fetchQuotes(slugs).then((prices) => {
-      if (!prices) return;
-      setCrypto((c) => {
-        if (!c) return c;
-        return {
-          ...c,
-          source: 'live',
-          items: c.items.map((it) => {
-            const slug = c.slugById.get(it.meta.id);
-            const px = slug ? prices.get(slug) : undefined;
-            if (!px) return it;
-            const t = Date.now();
-            return { ...it, quote: { ask: px, bid: px, t } };
-          }),
-        };
-      });
-    });
-  }, [crypto]);
 
   const selectedId = picked[market];
   const active = market === 'osrs' ? osrs : market === 'rs3' ? rs3 : market === 'crypto' ? crypto : null;
@@ -204,6 +199,9 @@ export function App() {
             windowsPerDay: WINDOWS_PER_DAY,
             patient: def.rules.hasSpread ? patient : false,
             rules: def.rules,
+            // A coin can be bought in fractions; a GE item cannot, so a stack under
+            // one unit's price simply cannot trade it.
+            wholeUnits: def.native !== 'usd',
           })
         : null,
     [item, signals, capital, sizePct, patient, def.rules],
@@ -243,7 +241,7 @@ export function App() {
     );
   }
 
-  const goldRate = isGoldMarket(market) ? fxFor(fx, market === 'rs3' ? 'rs3' : 'osrs') : null;
+  const goldRate = isGoldMarket(market) ? fxFor(fx, market) : null;
   const toUsd = (v: number) => (goldRate != null ? gpToUsd(v, goldRate) : NaN);
 
   const money = (v: number) => (def.native === 'gp' ? `${fmtGp(v)} gp` : fmtUsd(v));
@@ -292,14 +290,28 @@ export function App() {
   const bid = item.quote?.bid ?? last?.l ?? 0;
   const spreadPct = bid > 0 ? (ask - bid) / bid : 0;
   const t = def.rules.tax;
-  const tax = t && ask >= t.exemptBelow ? Math.min(Math.floor(ask * t.rate), t.cap) : 0;
+  const tax = taxFor(def.rules, ask);
   const margin = ask - tax - bid;
   const costs = metrics.taxPaid + bt.feesPaid;
 
   const filtered = items.filter((i) => i.meta.name.toLowerCase().includes(query.trim().toLowerCase()));
   const lastSignal = signals[signals.length - 1] === 1 ? 'long' : 'flat';
-  const usdNote = goldRate != null ? `${fmtUsd(toUsd(capital))} at your rate` : `${moneyShort(capital)} start`;
+  /** The engine closes a still-open position on the last bar and tags that trade. */
+  const closedAtEnd = bt.trades[bt.trades.length - 1]?.reason === 'end of sample';
+  const usdNote = goldRate != null ? `${fmtUsd(toUsd(metrics.finalEquity))} at your rate` : undefined;
   const taxLabel = t ? 'GE tax' : 'Fee';
+  const noTrades = metrics.tradeCount === 0;
+  /** A curve that never moves has no ratio to report: none of these are zero, they are absent. */
+  const flat = metrics.vol === 0;
+  const pnlUsd =
+    def.native === 'usd'
+      ? fmtUsd(metrics.finalEquity - capital)
+      : goldRate != null
+        ? fmtUsd(toUsd(metrics.finalEquity - capital))
+        : undefined;
+  const calmar = metrics.maxDD === 0 ? (metrics.cagr > 0 ? '∞' : '—') : fmtNum(metrics.calmar);
+  /** A stack that cannot buy one unit has no buy-and-hold return, only cash. */
+  const canAfford = bt.benchUnits > 0;
 
   const rows: MetricRow[] = [
     {
@@ -312,26 +324,39 @@ export function App() {
       label: 'Total return',
       value: fmtSignedPct(metrics.totalReturn),
       tone: metrics.totalReturn >= 0 ? 'pos' : 'neg',
-      note: goldRate != null ? fmtUsd(toUsd(metrics.finalEquity - capital)) : undefined,
+      note: pnlUsd,
     },
     { label: 'CAGR', value: fmtPct(metrics.cagr), tone: metrics.cagr >= 0 ? 'pos' : 'neg' },
-    { label: 'Sharpe', value: fmtNum(metrics.sharpe), note: '365-day year' },
-    { label: 'Sortino', value: fmtNum(metrics.sortino) },
+    {
+      label: 'Sharpe',
+      value: flat ? '—' : fmtNum(metrics.sharpe),
+      note: flat ? 'no price movement' : '365-day year',
+    },
+    { label: 'Sortino', value: flat ? '—' : fmtNum(metrics.sortino) },
     {
       label: 'Max drawdown',
       value: fmtPct(metrics.maxDD),
       tone: 'neg',
-      note: goldRate != null ? fmtUsd(toUsd(capital * metrics.maxDD)) : `${metrics.maxDDDays.toFixed(0)}d deep`,
+      note:
+        def.native === 'usd'
+          ? fmtUsd(metrics.maxDDPeak * metrics.maxDD)
+          : goldRate != null
+            ? fmtUsd(toUsd(metrics.maxDDPeak * metrics.maxDD))
+            : `${metrics.maxDDDays.toFixed(0)}d deep`,
     },
-    { label: 'Calmar', value: fmtNum(metrics.calmar) },
+    { label: 'Calmar', value: calmar },
     { label: 'Volatility', value: fmtPct(metrics.vol, 0) },
-    { label: 'Win rate', value: fmtPct(metrics.winRate, 0), note: `${metrics.tradeCount} closed` },
+    {
+      label: 'Win rate',
+      value: noTrades ? '—' : fmtPct(metrics.winRate, 0),
+      note: noTrades ? 'no closed trades' : `${metrics.tradeCount} closed`,
+    },
     {
       label: 'Profit factor',
-      value: metrics.profitFactor >= 99 ? '∞' : fmtNum(metrics.profitFactor),
-      tone: metrics.profitFactor >= 1 ? 'pos' : 'neg',
+      value: noTrades ? '—' : metrics.profitFactor >= 99 ? '∞' : fmtNum(metrics.profitFactor),
+      tone: noTrades ? undefined : metrics.profitFactor >= 1 ? 'pos' : 'neg',
     },
-    { label: 'Avg hold', value: `${metrics.avgBarsHeld.toFixed(0)} d` },
+    { label: 'Avg hold', value: noTrades ? '—' : `${metrics.avgBarsHeld.toFixed(0)} d` },
     { label: 'Time in market', value: fmtPct(metrics.exposure, 0) },
     {
       label: t ? 'GE tax paid' : 'Fees paid',
@@ -343,9 +368,11 @@ export function App() {
     { label: 'Worst day', value: fmtPct(metrics.worstDay), tone: 'neg' },
     {
       label: 'Buy & hold',
-      value: fmtSignedPct(metrics.benchReturn),
-      note: `Sharpe ${fmtNum(metrics.benchSharpe)} · DD ${fmtPct(metrics.benchMaxDD)}`,
-      tone: metrics.benchReturn >= 0 ? 'pos' : 'neg',
+      value: canAfford ? fmtSignedPct(metrics.benchReturn) : '—',
+      note: canAfford
+        ? `Sharpe ${fmtNum(metrics.benchSharpe)} · DD ${fmtPct(metrics.benchMaxDD)}`
+        : 'stack under one unit',
+      tone: canAfford ? (metrics.benchReturn >= 0 ? 'pos' : 'neg') : undefined,
     },
   ];
 
@@ -600,7 +627,7 @@ export function App() {
           </div>
           <div className="kv">
             <span>Open at end</span>
-            <b className="dim">liquidated</b>
+            <b className="dim">{closedAtEnd ? 'sold at last close' : 'none'}</b>
           </div>
           <div className="kv">
             <span>Exposure</span>

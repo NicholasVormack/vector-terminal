@@ -1,5 +1,4 @@
-import type { Bar, Item } from '../types';
-import type { MarketLoad } from './rs3';
+import type { Bar, Item, MarketLoad } from '../types';
 
 /**
  * Crypto, from CoinGecko.
@@ -52,21 +51,32 @@ export async function loadCrypto(): Promise<CryptoLoad> {
   if (!res.ok) throw new Error(`crypto snapshot HTTP ${res.status}`);
   const raw = (await res.json()) as CryptoSnapshot;
   const slugById = new Map<number, string>();
+  // The snapshot has shipped two coins on the same id, which makes one of them
+  // unselectable and gives React duplicate keys, so duplicates get the next free
+  // number. Highest id wins the range, so a renumber can never collide again.
+  const used = new Set<number>();
+  let next = raw.coins.reduce((m, c) => Math.max(m, c.id), 0) + 1;
 
   const items: Item[] = raw.coins.map((c) => {
-    slugById.set(c.id, c.slug);
-    const bars: Bar[] = c.rows.map(([t, p, v]) => {
-      const open = p;
-      return { t, o: open, h: p, l: p, c: p, v: v ?? 0 };
-    });
-    // A daily close sequence has no intraday range, so every candle opens at its
-    // close and the chart is a line wearing a candle's clothes. That is the honest
-    // rendering of the data CoinGecko gives on the free tier.
-    for (let i = 1; i < bars.length; i++) bars[i].o = bars[i - 1].c;
+    let id = c.id;
+    if (used.has(id)) id = next++;
+    used.add(id);
+    slugById.set(id, c.slug);
+    // A daily close sequence has no intraday range, so each candle opens where the
+    // last one closed and carries no wick: a line wearing a candle's clothes, which
+    // is the honest rendering of the data the free tier gives.
+    const bars: Bar[] = c.rows.map(([t, p, v], i) => ({
+      t,
+      o: i > 0 ? c.rows[i - 1][1] : p,
+      h: p,
+      l: p,
+      c: p,
+      v: v ?? 0,
+    }));
     const last = bars[bars.length - 1];
     return {
       meta: {
-        id: c.id,
+        id,
         name: `${c.name} (${c.symbol})`,
         limit: 0,
         members: false,

@@ -57,7 +57,7 @@ const CRYPTO: MarketDef = {
   unitLabel: 'Stack, USD',
   venue: 'CoinGecko',
   fillNote:
-    'One daily close, fills at that close, 10bps taker fee on both sides. No spread, no funding, no perp. A daily close is not a price you could have got at 3am.',
+    'One daily close, fills at that close, 10bps taker fee on both sides. No spread, no funding, no perp. Coins are bought in fractions, so the stack deploys in full instead of rounding down to a whole coin. A daily close is not a price you could have got at 3am.',
 };
 
 const COLLECTIBLES: MarketDef = {
@@ -75,7 +75,14 @@ const COLLECTIBLES: MarketDef = {
 
 export const MARKETS: MarketDef[] = [OSRS, RS3, CRYPTO, COLLECTIBLES];
 
-export const marketById = (id: MarketId): MarketDef => MARKETS.find((m) => m.id === id) ?? OSRS;
+const BY_ID: Record<MarketId, MarketDef> = {
+  osrs: OSRS,
+  rs3: RS3,
+  crypto: CRYPTO,
+  collectibles: COLLECTIBLES,
+};
+
+export const marketById = (id: MarketId): MarketDef => BY_ID[id];
 
 /** The two venues that are priced in gold and converted to dollars for display. */
-export const isGoldMarket = (id: MarketId) => id === 'osrs' || id === 'rs3';
+export const isGoldMarket = (id: MarketId): id is 'osrs' | 'rs3' => id === 'osrs' || id === 'rs3';
