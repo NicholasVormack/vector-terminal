@@ -170,7 +170,15 @@ export function App() {
     refreshCryptoSeries(slug).then((bars) => {
       if (!alive || !bars) return;
       setCrypto((c) =>
-        c ? { ...c, items: c.items.map((it) => (it.meta.id === selectedId ? { ...it, bars } : it)) } : c,
+        c
+          ? {
+              ...c,
+              // The series now ends later than the snapshot it replaced, and the panel
+              // dates what it is showing, so the date has to move with the bars.
+              asOf: bars[bars.length - 1].t,
+              items: c.items.map((it) => (it.meta.id === selectedId ? { ...it, bars } : it)),
+            }
+          : c,
       );
     });
     return () => {

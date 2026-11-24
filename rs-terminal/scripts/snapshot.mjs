@@ -184,11 +184,6 @@ async function buildCrypto() {
 
   const coins = [];
   for (const id of COINS) {
-    if (have.has(id)) {
-      coins.push(have.get(id));
-      console.log(`  crypto ${id.padEnd(14)} kept from previous snapshot`);
-      continue;
-    }
     try {
       const chart = await getJson(
         `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=365&interval=daily`,
@@ -217,10 +212,28 @@ async function buildCrypto() {
       });
       console.log(`  crypto ${id.padEnd(14)} ${rows.length}d`);
     } catch (err) {
-      console.log(`  crypto ${id.padEnd(14)} SKIP (${err.message})`);
+      // A failure costs this coin one refresh, not its history: fall back to the rows
+      // already on disk instead of dropping the coin. Keeping the old rows on every
+      // run, which is what this used to do, meant the committed series never advanced.
+      const kept = have.get(id);
+      if (kept) {
+        const q = quotes[id];
+        coins.push(
+          q
+            ? {
+                ...kept,
+                quote: { ...kept.quote, price: q.price, chg24: q.chg24, volume: q.volume, mcap: q.mcap },
+              }
+            : kept,
+        );
+        console.log(`  crypto ${id.padEnd(14)} kept previous rows (${err.message})`);
+      } else {
+        console.log(`  crypto ${id.padEnd(14)} SKIP (${err.message})`);
+      }
     }
     await sleep(DELAY);
   }
+
   const asOf = Math.max(...coins.flatMap((c) => c.rows.map((r) => r[0])));
   await writeFile(join(OUT, 'crypto-snapshot.json'), JSON.stringify({ asOf, coins }));
   console.log(`crypto: ${coins.length} coins -> public/crypto-snapshot.json`);

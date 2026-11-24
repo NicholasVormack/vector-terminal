@@ -53,9 +53,9 @@ npm run snapshot        # RS3 + crypto + NFT floors -> public/*.json
 npm run snapshot rs3    # or one source at a time
 ```
 
-CoinGecko's free tier allows roughly five calls a minute, so the generator keeps the rows it already
-has and only fetches what is missing. Commit the resulting JSON: the app reads it as a static asset
-and the Pages build never touches the network.
+CoinGecko's free tier allows roughly five calls a minute, so the generator spaces its calls out and,
+when one fails, keeps the series already on disk instead of dropping the coin. Commit the resulting
+JSON: the app reads it as a static asset and the Pages build never touches the network.
 
 ## Running locally
 

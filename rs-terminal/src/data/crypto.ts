@@ -41,6 +41,29 @@ async function getJson(url: string, ms: number): Promise<unknown> {
   }
 }
 
+/**
+ * A daily close sequence into bars.
+ *
+ * CoinGecko's daily series is one price per day: there is no published high, low or
+ * session, so each candle opens at the previous close and carries no wick. That is a
+ * line wearing a candle's clothes, which is the honest rendering of the feed.
+ *
+ * Both the bundled snapshot and the runtime refresh build bars here on purpose. They
+ * used to differ — the refresh derived a high and a low from open→close — and the
+ * engine reads `h` as the ask and `l` as the bid (see runBacktest), so the refreshed
+ * series bought every entry at the day's high and sold every exit at its low: a spread
+ * this venue does not have. Same data, two shapes, 14 points of return apart on BTC.
+ */
+function barsFrom(rows: [number, number, number?][]): Bar[] {
+  const bars: Bar[] = [];
+  for (const [t, p, v] of rows) {
+    if (!Number.isFinite(p) || p <= 0) continue;
+    const open = bars.length ? bars[bars.length - 1].c : p;
+    bars.push({ t, o: open, h: p, l: p, c: p, v: v ?? 0 });
+  }
+  return bars;
+}
+
 export interface CryptoLoad extends MarketLoad {
   /** CoinGecko ids stay attached so a refresh knows what to ask for. */
   slugById: Map<number, string>;
@@ -62,17 +85,7 @@ export async function loadCrypto(): Promise<CryptoLoad> {
     if (used.has(id)) id = next++;
     used.add(id);
     slugById.set(id, c.slug);
-    // A daily close sequence has no intraday range, so each candle opens where the
-    // last one closed and carries no wick: a line wearing a candle's clothes, which
-    // is the honest rendering of the data the free tier gives.
-    const bars: Bar[] = c.rows.map(([t, p, v], i) => ({
-      t,
-      o: i > 0 ? c.rows[i - 1][1] : p,
-      h: p,
-      l: p,
-      c: p,
-      v: v ?? 0,
-    }));
+    const bars = barsFrom(c.rows);
     const last = bars[bars.length - 1];
     return {
       meta: {
@@ -110,14 +123,12 @@ export async function refreshCryptoSeries(slug: string): Promise<Bar[] | null> {
     const raw = (await getJson(
       `${CHART_URL}${slug}/market_chart?vs_currency=usd&days=365&interval=daily`,
       9000,
-    )) as { prices: [number, number][] };
+    )) as { prices: [number, number][]; total_volumes?: [number, number][] };
     if (!Array.isArray(raw?.prices)) return null;
-    const bars: Bar[] = [];
-    for (const [t, p] of raw.prices) {
-      if (!Number.isFinite(p) || p <= 0) continue;
-      const open = bars.length ? bars[bars.length - 1].c : p;
-      bars.push({ t, o: open, h: Math.max(open, p), l: Math.min(open, p), c: p, v: 0 });
-    }
+    // Volume rides along in the same payload, and the snapshot carries it, so dropping
+    // it here would blank the volume readout the moment a refresh lands.
+    const volumes = new Map((raw.total_volumes ?? []).map(([t, v]) => [t, v]));
+    const bars = barsFrom(raw.prices.map(([t, p]) => [t, p, volumes.get(t)]));
     return bars.length >= 60 ? bars : null;
   } catch {
     return null;
