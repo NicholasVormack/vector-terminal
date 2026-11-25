@@ -41,6 +41,8 @@ async function getJson(url: string, ms: number): Promise<unknown> {
   }
 }
 
+const DAY_MS = 86_400_000;
+
 /**
  * A daily close sequence into bars.
  *
@@ -53,15 +55,37 @@ async function getJson(url: string, ms: number): Promise<unknown> {
  * engine reads `h` as the ask and `l` as the bid (see runBacktest), so the refreshed
  * series bought every entry at the day's high and sold every exit at its low: a spread
  * this venue does not have. Same data, two shapes, 14 points of return apart on BTC.
+ *
+ * Only completed days survive. The payload ends with a point at "now", which is today
+ * in progress: it answers differently on every request, so a backtest over it cannot be
+ * reproduced, and it is not a close anybody could have traded at. Settled closes are the
+ * ones stamped at a UTC day boundary; the unfinished day is dropped here and lives in
+ * the header as the live quote instead.
  */
 function barsFrom(rows: [number, number, number?][]): Bar[] {
   const bars: Bar[] = [];
   for (const [t, p, v] of rows) {
-    if (!Number.isFinite(p) || p <= 0) continue;
+    if (!Number.isFinite(p) || p <= 0 || !Number.isFinite(t)) continue;
+    if (t % DAY_MS !== 0) continue;
     const open = bars.length ? bars[bars.length - 1].c : p;
     bars.push({ t, o: open, h: p, l: p, c: p, v: v ?? 0 });
   }
   return bars;
+}
+
+/**
+ * Change since the last settled close.
+ *
+ * The series stops on the final completed UTC day, so the only honest "today" figure is
+ * a live quote measured against that close. With no quote the newest settled day is the
+ * last move there is, and it is a day-over-day change.
+ */
+export function changeSinceSettledClose(bars: Bar[], livePrice: number | null): number | null {
+  if (bars.length < 2) return null;
+  const last = bars[bars.length - 1];
+  const prev = bars[bars.length - 2];
+  if (livePrice != null && livePrice > 0) return livePrice / last.c - 1;
+  return prev.c > 0 ? last.c / prev.c - 1 : null;
 }
 
 export interface CryptoLoad extends MarketLoad {
@@ -100,7 +124,11 @@ export async function loadCrypto(): Promise<CryptoLoad> {
     };
   });
 
-  return { items, source: 'snapshot', asOf: raw.asOf, slugById };
+  // Derive the date from the bars rather than the file: the series ends on a settled
+  // close now, and a snapshot written mid-day carries an asOf a day later than that.
+  const lastT = items.reduce((m, it) => Math.max(m, it.bars[it.bars.length - 1]?.t ?? 0), 0);
+
+  return { items, source: 'snapshot', asOf: lastT || raw.asOf, slugById };
 }
 
 /** One bulk call for the whole panel. Returns a slug -> quote map, or null. */

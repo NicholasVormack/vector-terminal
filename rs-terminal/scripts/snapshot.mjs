@@ -32,6 +32,15 @@ async function previous(name) {
 }
 const UA = 'vector-terminal/1.0 (portfolio dashboard; contact: none)';
 
+/**
+ * CoinGecko stamps the last point of a chart payload at the moment of the request, so
+ * it is today's unfinished bar. Only points on a UTC day boundary are settled closes,
+ * and only those belong in a series that has to reproduce. The app drops the same rows
+ * when it reads (barsFrom in src/data/crypto.ts), so the committed file matches it.
+ */
+const settledOnly = (rows) =>
+  rows.filter(([t, p]) => Number.isFinite(p) && p > 0 && t % 86_400_000 === 0);
+
 const RS3_ITEMS = [
   'Necronium bar',
   'Elder rune bar',
@@ -190,10 +199,12 @@ async function buildCrypto() {
       );
       const prices = chart?.prices ?? [];
       const vols = new Map((chart?.total_volumes ?? []).map(([t, v]) => [t, v]));
-      const rows = prices
-        .map(([t, p]) => [t, p, vols.get(t) ?? 0])
-        .filter(([, p]) => Number.isFinite(p) && p > 0);
-      if (rows.length < 60) throw new Error(`only ${rows.length} days`);
+      // CoinGecko ends the payload with a point at "now": today, unfinished. Only the
+      // points stamped at a UTC day boundary are settled closes, and only those belong in
+      // a series that has to reproduce. The app drops the same row when it reads (see
+      // barsFrom in src/data/crypto.ts); this keeps the committed file matching it.
+      const rows = settledOnly(prices.map(([t, p]) => [t, p, vols.get(t) ?? 0]));
+      if (rows.length < 60) throw new Error(`only ${rows.length} settled days`);
       const q = quotes[id] ?? {};
       coins.push({
         // Kept rows already hold an id, so a new coin must clear the highest one in
@@ -218,14 +229,13 @@ async function buildCrypto() {
       const kept = have.get(id);
       if (kept) {
         const q = quotes[id];
-        coins.push(
-          q
-            ? {
-                ...kept,
-                quote: { ...kept.quote, price: q.price, chg24: q.chg24, volume: q.volume, mcap: q.mcap },
-              }
-            : kept,
-        );
+        // Rows kept from an older file were fetched before this rule existed, so they
+        // can still carry a partial day; filter them on the way out, not just on fetch.
+        coins.push({
+          ...kept,
+          rows: settledOnly(kept.rows),
+          ...(q ? { quote: { ...kept.quote, price: q.price, chg24: q.chg24, volume: q.volume, mcap: q.mcap } } : {}),
+        });
         console.log(`  crypto ${id.padEnd(14)} kept previous rows (${err.message})`);
       } else {
         console.log(`  crypto ${id.padEnd(14)} SKIP (${err.message})`);

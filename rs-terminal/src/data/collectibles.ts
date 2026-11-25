@@ -1,5 +1,6 @@
 import type { Item } from '../types';
 import { useCallback, useEffect, useState } from 'react';
+import { changeSinceSettledClose } from './crypto';
 
 /**
  * The master list.
@@ -302,7 +303,6 @@ export function buildMasterRows(input: {
   for (const it of input.crypto ?? []) {
     const bars = it.bars;
     const last = bars[bars.length - 1];
-    const prev = bars[bars.length - 2];
     if (!last) continue;
     const px = it.quote?.ask ?? last.c;
     rows.push({
@@ -313,7 +313,9 @@ export function buildMasterRows(input: {
       priceKind: 'usd',
       native: px,
       unit: 'per coin',
-      chg24: prev && prev.c > 0 ? px / prev.c - 1 : null,
+      // A crypto series ends on its last settled close, so the live quote is measured
+      // against that bar; without one, the newest settled day is the last move.
+      chg24: changeSinceSettledClose(bars, it.quote ? px : null),
       chg7: null,
       chg30: null,
       source: 'CoinGecko',

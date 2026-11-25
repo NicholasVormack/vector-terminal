@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { EquityPoint, MarketId, MarketLoad } from './types';
 import { loadMarket, refreshSeries } from './data/api';
 import { loadRs3 } from './data/rs3';
-import { fetchQuotes, loadCrypto, refreshCryptoSeries } from './data/crypto';
+import { changeSinceSettledClose, fetchQuotes, loadCrypto, refreshCryptoSeries } from './data/crypto';
 import type { CryptoLoad } from './data/crypto';
 import { loadNftSnapshot } from './data/collectibles';
 import type { NftRow } from './data/collectibles';
@@ -293,7 +293,15 @@ export function App() {
   const last = bars[bars.length - 1];
   const prev = bars[bars.length - 2];
   const mid = item.quote ? (item.quote.ask + item.quote.bid) / 2 : (last?.c ?? 0);
-  const dayChange = prev ? mid / prev.c - 1 : 0;
+  // Crypto's series ends on the last settled close, so a live quote is measured against
+  // that bar. The other venues' series still carry the current day, so they compare with
+  // the bar before it.
+  const dayChange =
+    market === 'crypto'
+      ? (changeSinceSettledClose(bars, item.quote ? mid : null) ?? 0)
+      : prev
+        ? mid / prev.c - 1
+        : 0;
   const ask = item.quote?.ask ?? last?.h ?? 0;
   const bid = item.quote?.bid ?? last?.l ?? 0;
   const spreadPct = bid > 0 ? (ask - bid) / bid : 0;
@@ -406,7 +414,12 @@ export function App() {
             const b = it.bars[it.bars.length - 1];
             const p = it.bars[it.bars.length - 2];
             const px = it.quote ? (it.quote.ask + it.quote.bid) / 2 : b.c;
-            const chg = p && p.c > 0 ? px / p.c - 1 : 0;
+            const chg =
+              market === 'crypto'
+                ? (changeSinceSettledClose(it.bars, it.quote ? px : null) ?? 0)
+                : p && p.c > 0
+                  ? px / p.c - 1
+                  : 0;
             return (
               <li
                 key={it.meta.id}
@@ -513,7 +526,7 @@ export function App() {
           <p className="chart-note">
             {def.rules.hasSpread
               ? 'One candle is one day: the wick is the range this item actually traded between (average instant-sell to average instant-buy), the body is the move in the mid.'
-              : `One candle is one day and opens where the last one closed, because ${def.venue} publishes a single daily price with no intraday range.`}{' '}
+              : `One candle is one day and opens where the last one closed, because ${def.venue} publishes a single daily price with no intraday range. The series stops at the last completed UTC day: today is not finished, so it is not a close you could have traded and it is left out — the live price sits in the header and the day change is measured from that last settled close.`}{' '}
             Wheel to zoom, drag to pan, double-click to reset.
           </p>
         </section>

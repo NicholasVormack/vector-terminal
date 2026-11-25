@@ -3,6 +3,7 @@ import type { Item, MarketRules } from '../types';
 import { WINDOWS_PER_DAY, taxFor } from '../engine/backtest';
 import { fmtGp, fmtGpShort, fmtPct, fmtSignedPct, fmtUsd } from '../lib/format';
 import { gpToUsd } from '../data/fx';
+import { changeSinceSettledClose } from '../data/crypto';
 
 interface Props {
   items: Item[];
@@ -59,7 +60,12 @@ export function FlipTable({ items, selectedId, onSelect, rules, usdPerM, native 
         id: it.meta.id,
         name: it.meta.name,
         mid,
-        dayChange: last.c / bars[bars.length - 2].c - 1,
+        // Crypto's series ends on its last settled close, so its move is measured from
+        // that close rather than from the bar before it.
+        dayChange:
+          (native === 'usd'
+            ? changeSinceSettledClose(bars, it.quote ? mid : null)
+            : null) ?? last.c / bars[bars.length - 2].c - 1,
         spreadPct: (ask - bid) / mid,
         margin,
         roi: margin / bid,
